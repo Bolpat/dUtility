@@ -1,2 +1,2 @@
 # dUtility
-Some uitility functions for D Programming language
+Some uitility functions for D Programming Language
