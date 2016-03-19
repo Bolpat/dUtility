@@ -1,21 +1,30 @@
+// Written in the D programming language.
+//
 // The MIT License (MIT)
 //
 // Copyright (c) 2016 Q. F. Schroll
 
-module bolpat.multiota;
 
-import std.meta : AliasSeq;
+module bolpat.iota;
 
-debug import std.stdio : writefln;
 
-template Replicate(size_t n, TList...)
-{
-    static if (n == 0)
-        alias Replicate = AliasSeq!();
-    else
-        alias Replicate = AliasSeq!(TList, Replicate!(n-1, TList));
-}
+import bolpat.meta : AliasSeq, Replicate;
 
+/**
+ * At first, behaves like std.range.iota when used like
+ * `iota(args...)`;
+ * adds nested iteration support, i.e.
+ * ----
+ * foreach (i, j, k; iota[1 .. l, 1 .. m, 1 .. n])
+ * { }
+ * // behaves like
+ * foreach (i; 1 .. l)
+ * foreach (j; 1 .. m)
+ * foreach (k; 1 .. n)
+ * { }
+ * ----
+ * The multiple syntax does not provide steps other than 1.
+ */
 struct iota
 {
     static auto opCall(Args...)(Args args)
@@ -91,10 +100,12 @@ struct iota
                 return result;
             }
         };
+
+        // TODO: toString
     }
 }
 
-void main()
+debug unittest
 {
     import std.stdio;
 
@@ -112,7 +123,7 @@ void main()
     {
         writefln("%d", i);
     }
-    
+
     alias Matrix = real[][];
     uint l = 3, m = 4, n = 5;
     

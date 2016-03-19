@@ -1,8 +1,12 @@
+// Written in the D programming language.
+//
 // The MIT License (MIT)
 //
 // Copyright (c) 2016 Q. F. Schroll
 
+
 module bolpat.meta;
+
 
 public import std.meta;
 
@@ -76,3 +80,38 @@ unittest
     static assert (is ( I4 == AliasSeq!(int,  int, int,  int) ));
     static assert (is ( IU == AliasSeq!(int, uint, int, uint) ));
 }
+
+/+
+/// Applys functions f_i to values x_i pointwise.
+template Apply()
+{
+    alias Apply(xList...) = AliasSeq!();
+}
+
+/// ditto
+template Apply(alias f, fList...)
+{
+    static if (fList.length > 0)
+    {
+        alias Apply()                   = AliasSeq!();
+        alias Ap = Apply!fList;
+        alias Apply(alias x, xList...)  = AliasSeq!(f(x), Ap!xList);
+    }
+    else
+    {
+        alias Apply() = AliasSeq!();
+        alias Apply(alias x) = f(x);
+    }
+}
+
+///
+unittest
+{
+    int f(int x) { return x + 1; }
+    int g(int x) { return x + 2; }
+    int h(int x) { return x + 3; }
+
+    alias Ap = Apply!(f, g, h);
+    pragma (msg, Ap!(10, 20, 30));
+}
++/
