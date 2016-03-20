@@ -103,9 +103,10 @@ unittest
 }
 
 
-/// Like std.algorithm.iteration.reduce but for static arrays.
-/// [ x[0], ..., x[n] ].reduce!f == x[0].f(x[1]).f(x[2]) ... .f(x[n])
-/// == f(... f(f(x[0], x[1]), x[2]) ..., x[n])
+/** Like std.algorithm.iteration.reduce but for static arrays.
+ *  [ x[0], ..., x[n] ].staticreduce!f == x[0].f(x[1]).f(x[2]) ... .f(x[n])
+ *  == f(... f(f(x[0], x[1]), x[2]) ..., x[n])
+ */
 template staticreduce(alias fun)
 {
     import std.functional : binaryFun;
