@@ -64,7 +64,7 @@ unittest
 
     assert (!__traits(compiles, plus(1, 2)));
 
-    alias plusXY = implicit2!plus;
+    alias plusXY = implicit!plus;
     auto three = plusXY(1, 2);
     assert (three == 3);
 }
@@ -83,7 +83,7 @@ unittest
 
     assert (!__traits(compiles, plus(z, 2)));
 
-    alias plusZ = implicit2!plus;
+    alias plusZ = implicit!plus;
     auto three = plusZ(z, 2);
     assert (three == 3);
 }
