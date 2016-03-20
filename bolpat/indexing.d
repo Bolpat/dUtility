@@ -92,6 +92,28 @@ unittest
     assert (r == 4 + 1 + 4);
 }
 
+/+ TODO: Test!
+/// Supplies a trivial implementation of opDollar with a function parameter
+/// that tells how to get the length from the index i.
+mixin template opDollar(alias fun)
+{
+    Dollr!i opDollar(size_t i)() @property
+    {
+        import std.functional : unaryFun;
+        return unaryFun!fun(i);
+    }
+}
+
+/// Supplies a trivial implementation of opSlice
+mixin template opSlice
+{
+    Slice!i opSlice(size_t i)(size_t l, size_t u)
+    {
+        return Slice!i(l, u);
+    }
+}
++/
+
 
 /// Enables flattened view of a jagged array.
 auto flatten(size_t rk, Ar)(Ar r0)
@@ -213,6 +235,7 @@ unittest
     assert (result == 55);
 }
 
+// TODO: Write better unittest!
 debug unittest
 {
     import std.stdio;
@@ -246,4 +269,212 @@ debug unittest
 
     foreach_reverse (i, a; ar.flatten!3)
         writefln("%2s: %s", i, a);
+}
+
+/+TODO: Discuss whether multiIndex[1, 1  ..  3, 4] is a desired syntax usage.
+auto multiIndex(Dims...)(Dims end)
+{
+    return MultiIndex!(Dims.length)(end);
+}
+
+auto multiIndex(size_t d)(size_t[d] end)
+{
+    return MultiIndex!(d)(end);
+}
+
+auto multiIndex(size_t d)(size_t[d] start, size_t[d] end)
+{
+    return MultiIndex!(d)(start, end);
+}
++/
+
+struct multiIndex
+{
+    static auto opCall(Dims...)(Dims end)
+    {
+        return MultiIndex!(Dims.length)(end);
+    }
+    static auto opCall(size_t d)(size_t[d] end)
+    {
+        return MultiIndex!(d)(end);
+    }
+    static auto opCall(size_t d)(size_t[d] start, size_t[d] end)
+    {
+        return MultiIndex!(d)(start, end);
+    }
+
+    struct Slice { size_t l, u; }
+
+    static Slice opSlice(size_t i)(size_t l, size_t u)
+    {
+        return Slice(l, u);
+    }
+
+    static auto opIndex(Args...)(Args args)
+    if (Args.length % 2 != 0 && is (Args[$/2] == Slice))
+    {
+        return MultiIndex!(Args.length/2 + 1)(
+            [ args[0 .. $/2], args[$/2].l ],
+            [ args[$/2].u, args[$/2 + 1 .. $] ]);
+    }
+}
+
+struct MultiIndex(size_t rk)
+{
+private:
+    import bolpat.meta : Replicate;
+    alias Dims = Replicate!(rk, size_t);
+
+    immutable size_t[rk] start, end;
+    Dims values;
+
+    invariant
+    {
+        foreach (i, v; values)
+            assert (start[i] <= v && v < end[i]);
+    }
+
+public:
+    alias expand = values;
+
+
+    // CONSTRUCTOR //
+
+    this(size_t[rk] start, size_t[rk] end)
+    {
+        this.start = start;
+        this.end   = end;
+        foreach (i, ref v; values)
+            v = start[i];
+    }
+
+    this(size_t[rk] end)
+    {
+        this(size_t[rk].init, end);
+    }
+
+    this(Dims end)
+    {
+        this( [ end ] );
+    }
+
+
+    // CASTING //
+
+    bool opCast(T : bool)()
+    {
+        if ([ values ] == start) return false;
+        return true;
+    }
+
+    bool opEquals(int i)
+    in
+    {
+        assert (i == 0, "MultiIndex may only be value-compared with 0.");
+    }
+    body
+    {
+        return (i == 0) ^ cast(bool) this;
+    }
+
+    bool opEquals(MultiIndex m)
+    {
+        return this.opCmp(m) == 0;
+    }
+
+    int opCmp(MultiIndex m)
+    in
+    {
+        assert (this.start == m.start);
+        assert (this.end   == m.end  );
+    }
+    body
+    {
+        foreach (i, v; values)
+        {
+            if (v < m.values[i]) return -1;
+            if (v > m.values[i]) return  1;
+        }
+        return 0;
+    }
+
+    ref MultiIndex opUnary(string op : "++")()
+    {
+        foreach_reverse (i, ref v; values)
+            if (++v == end[i]) v = start[i];
+            else               break;
+        return this;
+    }
+
+    ref MultiIndex opUnary(string op : "--")()
+    {
+        foreach_reverse (i, ref v; values)
+            if (v-- == start[i]) v = end[i]-1;
+            else                 break;
+        return this;
+    }
+
+    ref MultiIndex opOpAssign(string op)(size_t n)
+    if (op == "+" || op == "-")
+    {
+        foreach (i; 0 .. n) mixin(op ~ op ~ `this;`);
+        return this;
+    }
+
+    MultiIndex opBinary(string op)(size_t n) const
+    if (op == "+" || op == "-")
+    {
+        auto temp = this;
+        return mixin (`temp`~op~`= n`);
+    }
+
+    import std.format : FormatSpec, formatElement;
+
+    void toString(DG, Char)(scope DG sink, FormatSpec!Char fmt = FormatSpec!char()) const
+    {
+        sink("(");
+        static if (rk > 0)
+        {
+            sink.formatElement(values[0], fmt);
+            foreach (v; values[1 .. $])
+            {
+                sink(",");
+                sink.formatElement(v, fmt);
+            }
+        }
+        sink(")");
+    }
+
+    string toString() const
+    {
+        import std.array : appender;
+
+        auto app = appender!string();
+        this.toString((const(char)[] chunk) => app ~= chunk);
+        return app.data;
+    }
+}
+
+// TODO: Write better unittest!
+debug unittest
+{
+    import std.stdio;
+
+    struct A
+    {
+        int a;
+
+        int opIndex(size_t i, size_t j)
+        {
+            return a*i + j;
+        }
+    }
+
+    auto a = A(10);
+    auto i = multiIndex[1,1 .. 3,4];
+    do
+    {
+        writefln("%s", a[i.expand]);
+    }
+    while (++i);
 }
