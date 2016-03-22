@@ -6,12 +6,12 @@
 
 
 /++
- + Provides the Structs Dollr!i and Slice!i to represent $ used in the index operator.
- + The Dollr is for having the information that the dollar sign is being used; this
+ + Provides the Structs Dollar!i and Slice!i to represent $ used in the index operator.
+ + The Dollar is for having the information that the dollar sign is being used; this
  + information however is lost when using the dollar in higher expression as in $-1 or $/2.
- + A Slice can be constructed from lower and upper bound and from single values and Dollr
+ + A Slice can be constructed from lower and upper bound and from single values and Dollar
  + which behave differently. The Slice has a length property.
- + The Dollr structure is especially created for the dollar slice, i.e. x[$] is a shortcut
+ + The Dollar structure is especially created for the dollar slice, i.e. x[$] is a shortcut
  + for x[0 .. $] as the first does not make sense for other reasons.
  +
  + Provides the flatten function that returns a Voldemort range of a jagged array that iterates
@@ -23,7 +23,7 @@ module bolpat.indexing;
 import bolpat.meta : AliasSeq, staticMap, Iota, Iterate;
 
 /// Returned by opDollar.
-struct Dollr(size_t i)
+struct Dollar(size_t i)
 {
     size_t value;
     alias value this;
@@ -44,9 +44,10 @@ struct Slice(size_t i)
         this.u = u;
     }
 
-    this(Dollr!i d) pure nothrow { this(  0,   d); }
-    this(size_t  v) pure nothrow { this(  v, v+1); }
-    this(Slice!i s) pure nothrow { this(s.l, s.u); }
+    // Cast constructors
+    this(Dollar!i d) pure nothrow { this(  0,   d); }
+    this(size_t   v) pure nothrow { this(  v, v+1); }
+    this(Slice!i  s) pure nothrow { this(s.l, s.u); }
 }
 
 /// Returns Slice!0, Slice!1, ..., Slice!(n-1)
@@ -67,7 +68,7 @@ unittest
     {
         auto opDollar(size_t i)()
         {
-            return Dollr!i(i);
+            return Dollar!i(i);
         }
 
         auto opSlice(size_t i)(size_t l, size_t u)
@@ -97,7 +98,7 @@ unittest
 /// that tells how to get the length from the index i.
 mixin template opDollar(alias fun)
 {
-    Dollr!i opDollar(size_t i)() @property
+    Dollar!i opDollar(size_t i)() @property
     {
         import std.functional : unaryFun;
         return unaryFun!fun(i);
