@@ -113,33 +113,61 @@ template staticreduce(alias fun)
 
     alias f = binaryFun!fun;
 
-    auto staticreduce(T, size_t dim)(T[dim] r)
+    string code(bool neutral)()
     {
-        pragma (inline, true);
-
-        static assert (dim > 0, "Length of the static array must be nonzero.");
-
-        static string code(size_t dim)
+        import std.format : format;
+        static if (neutral)
         {
-            import std.format : format;
-            string r = `r[0]`;
-            foreach (i; 1 .. dim) r = `f(`~r~`,r[%d])`.format(i);
-            return r;
+            string opt = ", T e";
+            string check = "true";
+            string neutral = "e";
+            string first = "0";
         }
-        return mixin (code(dim));
+        else
+        {
+            string opt = "";
+            string check = "dim > 0";
+            string neutral = "r[0]";
+            string first = "1";
+        }
+        return q{
+            auto staticreduce(T, size_t dim)(T[dim] r %s) // opt
+            {
+                pragma (inline, true);
+                // check
+                static assert (%s, "Length of the static array must be nonzero.");
+                static string result(size_t dim)
+                {
+                    import std.format : format;
+                    string r = `%s`; // neutral
+                    foreach (i; %s .. dim) // first
+                        r = `f(%%s, r[%%d])`.format(r, i);
+                    return r;
+                }
+                return mixin (result(dim));
+            }
+        }.format(opt, check, neutral, first);
     }
+
+    mixin (code!false);
+    mixin (code!true);
 }
 
 ///
 @nogc @safe nothrow pure
 unittest
 {
-    int[3] t = [ 1, 5, 9 ];
+    int[3] t = [ 3, 5, 9 ];
     auto s = t.staticreduce!`a+b`;
     auto p = t.staticreduce!`a*b`;
 
-    assert (s == 1 + 5 + 9);
-    assert (p == 1 * 5 * 9);
+    assert (s == 3 + 5 + 9);
+    assert (p == 3 * 5 * 9);
+
+    s = t.staticreduce!`a+b`(1);
+    p = t.staticreduce!`a*b`(2);
+    assert (s == 1 + 3 + 5 + 9);
+    assert (p == 2 * 3 * 5 * 9);
 }
 
 @nogc @safe nothrow pure
