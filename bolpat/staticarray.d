@@ -34,9 +34,12 @@ unittest
 
 import bolpat.meta : Iota;
 
+/// Returns a static array with ascending or descending elements.
 enum staticiota(int end) = staticiota!(0, end);
+///
 enum staticiota(int start, int end, int step = 1) = [ Iota!(start, end, step) ];
 
+///
 @nogc @safe pure nothrow
 unittest
 {
@@ -47,6 +50,37 @@ unittest
     a = staticiota!(1, 5);
     b = [ 1, 2, 3, 4 ];
     assert (a == b);
+}
+
+/// Returns a slice of a static array. The bounds must be known at compile time.
+auto staticslice(size_t l, size_t u, T, size_t dim)(T[dim] r)
+{
+    import std.range : iota;
+    import std.format : format;
+    return mixin (q{ [ %( r[%d] %| , %) ] }.format(iota(l, u))).makestatic;
+}
+
+///
+@nogc @safe pure nothrow
+unittest
+{
+    assert ([ 1, 4, 9, 16 ].staticslice!(1, 3) == [ 4, 9 ]);
+}
+
+/// Returns a static array that is a selection of elements of the given static array
+/// chosen by another static array which contains the indices to select.
+auto staticselect(T, size_t dim, size_t idim)(T[dim] r, size_t[idim] i)
+{
+    import std.range : iota;
+    import std.format : format;
+    return mixin (q{ [ %( r[i[%d]] %| , %) ] }.format(i.length.iota)).makestatic;
+}
+
+///
+@nogc @safe pure nothrow
+unittest
+{
+    assert ([ 1, 4, 9, 16 ].staticselect([ 2, 3, 1 ]) == [ 9, 16, 4 ]);
 }
 
 /**
@@ -76,8 +110,7 @@ if (fun.length > 0 )
 
         return mixin (q{
                 [ %( f(r[%d]) %| , %) ]
-            }.format(dim.iota))
-            .makestatic;
+            }.format(dim.iota)).makestatic;
     }
 }
 
