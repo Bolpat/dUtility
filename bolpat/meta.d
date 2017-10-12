@@ -48,14 +48,10 @@ template Iota(int start, int stop, int step = 1)
 /**
  * Returns $(D F!(F!(...(F!(X))...))) with $(I n) iterations of $(D F).
  */
-template Iterate(alias F, uint n, X)
+template Iterate(alias F, size_t n, X)
 {
-    static if (n == 0)
-        alias Iterate = X;
-    else static if (n == 1)
-        alias Iterate = F!X;
-    else
-        alias Iterate = Iterate!(F, n-1, F!X);
+    static if (n == 0)      alias Iterate = X;
+    else                    alias Iterate = Iterate!(F, n-1, F!X);
 }
 
 ///
@@ -67,7 +63,10 @@ unittest
     static assert (is (Iterate!(Array, 4, int) == int[][][][]));
 }
 
-/// Repeats the $(D TList) sequence n times.
+/// Repeats the TList sequence n times.
+alias Replicate(size_t n : 1, alias T) = T;
+
+/// ditto
 alias Replicate(size_t n, TList...) = staticMap!(Const!TList, Iota!n);
 
 ///

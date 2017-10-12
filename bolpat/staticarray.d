@@ -53,11 +53,15 @@ unittest
 }
 
 /// Returns a slice of a static array. The bounds must be known at compile time.
-auto staticslice(size_t l, size_t u, T, size_t dim)(T[dim] r)
+/// Negative values for u make usage like $-u.
+auto staticslice(size_t l, ptrdiff_t u, T, size_t dim)(T[dim] r)
 {
     import std.range : iota;
     import std.format : format;
-    return mixin (q{ [ %( r[%d] %| , %) ] }.format(iota(l, u))).makestatic;
+    static if (u <= 0 && l > 0)
+        return mixin (q{ [ %( r[%d] %| , %) ] }.format(iota(l, dim + u))).makestatic;
+    else
+        return mixin (q{ [ %( r[%d] %| , %) ] }.format(iota(l, u))).makestatic;
 }
 
 ///
@@ -65,6 +69,7 @@ auto staticslice(size_t l, size_t u, T, size_t dim)(T[dim] r)
 unittest
 {
     assert ([ 1, 4, 9, 16 ].staticslice!(1, 3) == [ 4, 9 ]);
+    auto x = [ 1 ].staticslice!(0, 0);
 }
 
 /// Returns a static array that is a selection of elements of the given static array
@@ -105,6 +110,8 @@ if (fun.length > 0 )
         enum error = fun.length > 1
             ? "All mapping functions must not return void."
             : "Mapping function must not return void.";
+        static if (dim > 0)
+            static assert (!is (T == void), "T must not be void unless dim == 0.");
         foreach (func; fun)
             static assert (!is (typeof (func(T.init)) == void), error);
 
@@ -145,7 +152,7 @@ template staticreduce(alias fun)
     import std.functional : binaryFun;
 
     alias f = binaryFun!fun;
-
+    /+ // does not work. bug?
     string code(bool neutral)()
     {
         import std.format : format;
@@ -165,10 +172,10 @@ template staticreduce(alias fun)
         }
         return q{
             auto staticreduce(T, size_t dim)(T[dim] r %s) // opt
+            if (%s) // check
             {
                 pragma (inline, true);
-                // check
-                static assert (%s, "Length of the static array must be nonzero.");
+
                 static string result(size_t dim)
                 {
                     import std.format : format;
@@ -184,6 +191,37 @@ template staticreduce(alias fun)
 
     mixin (code!false);
     mixin (code!true);
+    +/
+    auto staticreduce(T, size_t dim)(T[dim] r)
+    if (dim > 0)
+    {
+        pragma (inline, true);
+
+        static string result(size_t dim)
+        {
+            import std.format : format;
+            string r = `r[0]`;
+            foreach (i; 1 .. dim)
+                r = `f(%s, r[%d])`.format(r, i);
+            return r;
+        }
+        return mixin (result(dim));
+    }
+    
+    auto staticreduce(T, size_t dim, E)(T[dim] r, E e)
+    {
+        pragma (inline, true);
+
+        static string result(size_t dim)
+        {
+            import std.format : format;
+            string r = `e`;
+            foreach (i; 0 .. dim)
+                r = `f(%s, r[%d])`.format(r, i);
+            return r;
+        }
+        return mixin (result(dim));
+    }
 }
 
 ///
@@ -201,6 +239,12 @@ unittest
     p = t.staticreduce!`a*b`(2);
     assert (s == 1 + 3 + 5 + 9);
     assert (p == 2 * 3 * 5 * 9);
+    
+    void[0] v;
+    auto x = v.staticreduce!`a+b`(1);
+    auto y = v.staticreduce!`a*b`(2);
+    assert (x == 1);
+    assert (y == 2);
 }
 
 @nogc @safe nothrow pure
@@ -220,6 +264,31 @@ unittest
     assert (x == 1*1 + 5*5 + 9*9);
 }
 
+auto staticmax(T, size_t n)(T[n] arg) // rvalue
+{
+    return staticmax(arg);
+}
+
+auto staticmax(T, size_t n)(ref T[n] arg) // lvalue
+{
+    import std.algorithm : max;
+    import std.range : iota;
+    import std.format;
+    return mixin("max( %(arg[%s]%|, %) )".format(iota(n)));
+}
+
+auto staticmin(T, size_t n)(T[n] arg) // rvalue
+{
+    return staticmax(arg);
+}
+
+auto staticmin(T, size_t n)(ref T[n] arg) // lvalue
+{
+    import std.algorithm : min;
+    import std.range : iota;
+    import std.format;
+    return mixin("min( %(arg[%s]%|, %) )".format(iota(n)));
+}
 
 template staticZipWith(fun...)
 {

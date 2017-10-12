@@ -166,7 +166,7 @@ auto flatten(size_t rk, Ar)(Ar r0)
 
             return q{
                 // int opApply[Reverse](...)
-                int %s(int delegate(size_t, ref T) dg)
+                int %s(DG : int delegate(size_t, ref T))(DG dg)
                 {
                     enum foreachs = rk.iota.map!(
                         i => q{
@@ -186,11 +186,10 @@ auto flatten(size_t rk, Ar)(Ar r0)
                 }
 
                 // int opApply[Reverse](...)
-                int %s(int delegate(ref T) dg)
+                int %s(DG : int delegate(ref T))(DG dg)
                 {
-                    auto f(size_t, ref T t) { return dg(t); }
-                    // return opApply[Reverse](&f)
-                    return %s(&f);
+                    // return opApply[Reverse](...)
+                    return %s( (size_t i, ref T t) => dg(t) );
                 }
             }.format(name, loop, start, inc, name, name);
         }
@@ -237,16 +236,16 @@ unittest
 }
 
 // TODO: Write better unittest!
-debug unittest
+version (none) unittest
 {
     import std.stdio;
 
     auto ar =
     [
-        [ [1, 2], [3, 4], [5, 6] ],
-        [ [2, 3], [4, 5], [6, 7] ],
-        [ [3, 4], [5, 6], [7, 8] ],
-        [ [4, 5], [6, 7], [8, 9] ]
+        [ [1, 2,   3,        4],   [5, 6] ],
+        [ [2, 3], [4,        5,     6, 7] ],
+        [ [3, 4], [5], [ ], [6,     7, 8] ],
+        [ [4, 5], [6,        7],   [8, 9] ]
     ];
 
     foreach (i, a; ar.flatten!1)
@@ -271,6 +270,7 @@ debug unittest
     foreach_reverse (i, a; ar.flatten!3)
         writefln("%2s: %s", i, a);
 }
+
 
 /+TODO: Discuss whether multiIndex[1, 1  ..  3, 4] is a desired syntax usage.
 auto multiIndex(Dims...)(Dims end)
@@ -303,7 +303,7 @@ struct multiIndex
     {
         return MultiIndex!(d)(start, end);
     }
-
+/+
     struct Slice { size_t l, u; }
 
     static Slice opSlice(size_t i)(size_t l, size_t u)
@@ -318,6 +318,7 @@ struct multiIndex
             [ args[0 .. $/2], args[$/2].l ],
             [ args[$/2].u, args[$/2 + 1 .. $] ]);
     }
++/
 }
 
 struct MultiIndex(size_t rk)
@@ -327,8 +328,8 @@ private:
     alias Dims = Replicate!(rk, size_t);
 
     immutable size_t[rk] start, end;
-    Dims values;
-
+    alias values = expand;
+    
     invariant
     {
         foreach (i, v; values)
@@ -336,8 +337,7 @@ private:
     }
 
 public:
-    alias expand = values;
-
+    Dims expand;
 
     // CONSTRUCTOR //
 
@@ -403,7 +403,7 @@ public:
     {
         foreach_reverse (i, ref v; values)
             if (++v == end[i]) v = start[i];
-            else               break;
+            else               return this;
         return this;
     }
 
@@ -411,7 +411,7 @@ public:
     {
         foreach_reverse (i, ref v; values)
             if (v-- == start[i]) v = end[i]-1;
-            else                 break;
+            else                 return this;
         return this;
     }
 
@@ -457,7 +457,7 @@ public:
 }
 
 // TODO: Write better unittest!
-debug unittest
+version (none) unittest
 {
     import std.stdio;
 

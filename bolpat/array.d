@@ -1,370 +1,420 @@
+// Written in the D programming language.
+//
 // The MIT License (MIT)
 //
 // Copyright (c) 2016 Q. F. Schroll
 
-import std.algorithm.iteration : reduce;
 
-import bolpat.meta : AliasSeq;
+module bolpat.array;
 
-/**
- * Creates a sequence of values, similar to how $(D iota) does.
- */
-template Iota(int stop)
+
+// Pseudo Slice without position argument. Used only in slices attribute.
+private struct Dim
 {
-    static if (stop <= 0) alias Iota = AliasSeq!();
-    else                  alias Iota = AliasSeq!(Iota!(stop - 1), stop - 1);
-}
-
-/// ditto
-template Iota(int start = 0, int stop)
-{
-    static if (stop <= start) alias Iota = AliasSeq!();
-    else                      alias Iota = AliasSeq!(Iota!(start, stop - 1), stop - 1);
-}
-
-/// ditto
-template Iota(int start, int stop, int step)
-{
-    static assert(step != 0, "Iota: step must be != 0");
-    static if (step > 0)
-        static if (stop <= start) alias Iota = AliasSeq!();
-        else                      alias Iota = AliasSeq!(Iota!(start, stop - step, step), stop - step);
-    else
-        static if (stop >= start) alias Iota = AliasSeq!();
-        else                      alias Iota = AliasSeq!(Iota!(start, stop - step, step), stop - step);
-}
-
-/// Replicate(i, T) is (T, T, ..., T) with i copies of T.
-private template Replicate(size_t i, T)
-    if (i > 0)
-{
-    static if (i == 1) alias Replicate = T;
-    else               alias Replicate = AliasSeq!(T, Replicate!(i - 1, T));
-}
-
-/// IMORTANT NOTES ABOUT TERMS:
-/// Usually when dealing with arrays, the term dimension denotes the number
-/// of [] after T, e.g. T[][][] is said to have dimension 3. This will be called
-/// the rank of the Array. The term "dimension" will have another meaning here.
-/// Because the sub-arrays in an T[][]-object need not to have same length
-/// (called jagged array), there cannot even be a useful term for their length
-/// as this length would have to be unique.
-/// But the Arrays here are hypercubes which have a certain size in each dimension.
-
-/// Returned by indexing operator when using a plain number as index.
-/// As opposed to a plain size_t, a Value carries the dimension index, too.
-private struct Value(size_t index)
-{
-    size_t value;
-    alias value this;
+    size_t  l, u, d;
     
-    pure this(size_t value)
-    in   { assert(value < dims[i]); }
-    body { this.value = value; }
-}
+    this(size_t d) pure nothrow @nogc @safe
+    {
+        this(0, d, d);
+    }
 
-/// Returned by indexing operator opSlice.
-private struct Slice(size_t index)
-{
-    size_t l, u;
-    pure @property size_t length() const { return u - l; }
-    
-    pure this(size_t l, size_t u)
+    this(size_t l, size_t u, size_t d) pure nothrow @nogc @safe
     {
         this.l = l;
         this.u = u;
+        this.d = d;
+    }
+    
+    pure nothrow @nogc @safe
+    invariant
+    {
+        assert (l <= u);
+        assert (u <= d);
+    }
+
+    size_t length() const pure nothrow @nogc @safe
+    {
+        return u - l;
     }
 }
 
-/// Returned by opDollar.
-private struct Dollr(size_t index)
+struct array(T)
 {
-    size_t value;
-    alias value this;
-    
-    pure this(size_t value)
-    in   { assert(value == dims[i]); }
-    body { this.value = value; }
-    
-    pure @property Slice!i toSlice() const { return Slice!i(0, value); }
+    static opCall(Dim...)(Dim d)
+    {
+        return Array!(T, Dim.length)(d);
+    }
+    /+
+    static opIndex(Dim...)(Dim d)
+    {
+        struct Result
+        {
+            auto opAssign(T delegate(Dim) dg)
+            {
+                return Array!(T, Dim.length)(d, dg);
+            }
+        }
+        return Result();
+    }
+    +/
 }
 
-/++
- +  Convenience constructor for Arrays.
- +
- +  It takes the type and dimensions, the rank is infered by the number
- +  of dimensions given.
- +
- +  Intended usage:
- +  ----
- +  void main()
- +  {
- +      auto ar = array!int(2, 3, 4);
- +      // Makes a rank-3 Array, that has the dimensions 2, 3, and 4.
- +      // The 24 elemetns are defaulted to int.init (== 0).
- +      
- +      // You can iterate over the array the conservative way ...
- +      foreach (i; 0 .. ar.dim!0)
- +      foreach (j; 0 .. ar.dim!1)
- +      foreach (k; 0 .. ar.dim!2)
- +      {
- +          ar[i, j, k] = i * j + k;
- +      }
- +      // ... but the better style is
- +      foreach (i, j, k, ref x; ar)
- +      {
- +          x = i * j + k;
- +      }
- +      Just for initializing, you can use a delegate.
- +      
- +  }
- +  ----
- +  Instead of having to use 0 .. $, you can use $ alone when indexing.
- +  You can however not use the value represented by $ when using $ alone.
- +  You can use the value represented by $ in higher expressions like $-1, $/2, etc.
- +  For a rank-4 Array ar, the expression ar[$,$,$,$] represents the full Array,
- +  but ar[$-1, $-1, $-1, $-1] is the last value.
- +/
-auto array(T, Dim...)(Dim d)
-{
-    return Array!(T, Dim.length)(d);
-}
-
-///
+/// ditto
 alias Array(T, size_t rk : 0) = T;
 
-///
+/// ditto
 alias Array(T, size_t rk : 1) = T[];
 
-///
+/// ditto
 struct Array(T, size_t rk)
 if (rk > 1)
 {
-
 private:
+    import bolpat.meta : Replicate;
+    import bolpat.staticarray : staticreduce;
+    import bolpat.indexing;
+
     alias Dims = Replicate!(rk, size_t);
 
-    /// Used when a delegate f is used to assign the data values.
+    // Used when a delegate f is used to assign the data values.
     enum functionAssign =
     q{
         import std.range                : iota;
         import std.format               : format;
         import std.algorithm.iteration  : map;
-        import std.array                : join; 
-        
+        import std.array                : join;
+
         size_t k = 0;
         mixin
-        (   //           j =>    foreach (i_j; 0 .. dims [ j ])
-            rk.iota.map!(j => q{ foreach (i%d; 0 .. dims[ %d ]) }.format(j, j)).join
+        (
+            rk.iota.map!(
+                j => q{
+                //  foreach (i_j; 0 .. dims [ j ])
+                    foreach (i%d; 0 .. dims[ %d ])
+                }.format(j, j)
+            ).join
             ~
-            q{{ //         data[k++] = f( i_0, ..., i_r )
+            q{{ //         data[k++] = f( i_0, ... , i_r );
                 mixin ( q{ data[k++] = f( %( i%d %| , %) ); }.format(rk.iota) );
             }}
         );
     };
-    //  // Let r = rk - 1;
-    //  size_t k = 0;
-    //  foreach (i_0; 0 .. dim[0])
-    //      : : :
-    //  foreach (i_r; 0 .. dim[r])
-    //  {
-    //      data[k++] = f(i_0, ..., i_r);
-    //  }
 
-    /// The actual content of the Array.
+    // The actual content of the Array. The resource is not held excluively.
     T[] data;
 
-    /// The dynamic dimensions of the Array.
-    size_t[rk] dims;
+    // The slices and dimensions of the Array.
+    Dim[rk] dims;
 
 pure nothrow @nogc
 {
-    /// Ensure that the dimensions and data.length correspond.
+    // Ensure that the dimensions and data.length correspond.
     invariant
     {
-        size_t d = 1; foreach (dim; dims) d *= dim;
-        assert (d == data.length);
+        size_t length = 1;
+        foreach (d; dims) length *= d.d;
+        assert (length == data.length);
     }
+    
+public const @property:
+    // PROPERTIES //
 
-public const:                                               // PROPERTIES //
-    /// Returns the number of dimensions the Array has.
-    @property size_t rank()          { return rk; }
-
-    /// Returns the i-th dimension; i must be given at compile-time to be checked.
-    @property size_t dim(size_t i)() { return dims[i]; };
+    /// The number of dimensions the Array has.
+    enum rank = rk;
 
     /// Returns the number of elements stored in the Array.
-    @property size_t length()        { return data.length; }
+    size_t length()
+    {
+        size_t result = 1;
+        foreach (d; dims)
+            result *= d.length;
+        return result;
+    }
+
+    /// Returns the i-th dimension; i must be given at compile-time to be checked.
+    size_t length(size_t i)()
+    {
+        return dims[i].length;
+    }
 }
 
-public:                                                     // CONSTRUCTORS //
+public:
+    // CONSTRUCTORS //
 
-    alias toSubArray this;
-    pure @property auto toSubArray() inout { return this[]; }
+    private this(inout(T)[] data, Dim[rk] dims) inout pure
+    {
+        this.data = data; // No dup!
+        this.dims = dims;
+    }
 
     /// Constructs an Array with specified dimensions. All elements are set to T.init.
-    pure this(Dims dimensions) @safe
+    this(Dims dimensions) pure @safe
     {
-        dims = [ dimensions ];
-        data = new T[](dims.reduce!`a * b`);
+        import std.format : format;
+        import std.range : iota;
+
+        dims = mixin (`[ %( Dim(dimensions[%d]) %| , %) ]`.format(rk.iota));
+        data = new T[]( [ dimensions ].staticreduce!`a*b` );
     }
 
-    /// Directly initializes the internal data with values produced by the delegate f.
-    /// If f is pure, then the constructor is pure.
-    /// Unless f is @system, the constructor is @safe.
-    this(DG)(Dims dimensions, DG f)
+    /**
+     * Directly initializes the internal data with values produced by the delegate f.
+     * If f is pure, then the constructor is pure.
+     * Unless f is @system, the constructor is @safe.
+     *
+     * Essentially does (where r = rk - 1):
+     * ---
+     * size_t k = 0;
+     * foreach (i0; 0 .. dimensions[0])
+     *    :      :    ·.            :
+     * foreach (ir; 0 .. dimensions[r])
+     * {
+     *     data[k++] = f(i0, ..., ir);
+     * }
+     * ---
+     */
+    private this(DG)(Dims dimensions, DG f)
     {
+        import std.format : format;
+        import std.range : iota;
         import std.array : uninitializedArray;
-        
-        dims = [ dimensions ];
-        size_t l = 1;
-        foreach (i, dim; dimensions) l *= dim;
-        data = uninitializedArray!(T[])(l);
-        
-        mixin(functionAssign);
+
+        dims = mixin (`[ %( Dim(dimensions[%d]) %| , %) ]`.format(rk.iota));
+
+        data = uninitializedArray!(T[])( [ dimensions ].staticreduce!`a*b` );
+
+        mixin (functionAssign);
     }
 
-    this(this) pure
+    // ASSIGNMENT //
+    ref Array opAssign(DG : T delegate(Dims))(DG f)
     {
-        data = data.dup;
+        return this = MultiIndex!rk i => f(i.expand);
     }
 
-                                                            // ASSIGNMENT //
-    ref Array opAssign(T delegate(Dims) @trusted pure nothrow f) @safe pure nothrow
+    ref Array opAssign(DG : T delegate(MultiIndex!rk))(DG f)
     {
-        mixin(functionAssign);
+        mixin (functionAssign);
         return this;
     }
+    
+    // INDEXING //
 
-    ref Array opAssign(T delegate(Dims) @trusted pure f) @safe pure
-    {
-        mixin(functionAssign);
-        return this;
-    }
-
-    ref Array opAssign(T delegate(Dims) f)
-    {
-        mixin(functionAssign);
-        return this;
-    }
-
-    /++
-     +  Changes the dimension interpretation of the Array.
-     +  The old dimensions' product must be exactly the new dimesions' product.
-     +  Otherwise, tryReDim returns false and reDim throws an InvalidatedException.
-     +
-     +  This, if the dimensions did change, all prevoiously created 
-     +  SubArrays of this instance will become invalidated.
-     +
-     +  Example:
-     +  ---
-     +  auto a = array!int(3, 4);
-     +  a  =  (i, j) => 4*i + j;
-     +  b  =  a[2, 1 .. 3];
-     +  /* a is interpreted as
-     +   *  0   1   2   3
-     +   *  4   5   6   7
-     +   *  8   9  10  11
-     +   * 
-     +   * b is interpreted as
-     +   *  5   6
-     +   */
-     +  assert(a[1, 1] == 5);
-     +  a.reDim(2, 6);
-     +  /* Now ar is interpreted as
-     +   *  0   1   2   3   4   5
-     +   *  6   7   8   9  10  11
-     +   */
-     +  assert(a[1, 1] == 7);
-     +  // Any action on b will throw an InvalidatedException until it is reassigned.
-     +  b  =  a[$, 3];
-     +  /* Now b is interpreted as
-     +   *  3
-     +   *  9
-     +   */
-     +  ---
-     +/
-    void reDim(Dims dimensions) @nogc pure
-    {
-        // statically allocate Exception as the function then can be @nogc.
-        shared static const reDimExc = new InvalidatedException("reDim: Incompatible Dimensions.");
-        if (!tryReDim(dimensions)) throw reDimExc;
-    }
-
-    /// ditto
-    bool tryReDim(Dims dimensions) @nogc nothrow pure
-    {
-        size_t d = 1;
-        foreach (dim; dimensions) d *= dim;
-        
-        if (d != data.length) return false;
-        dims = [ dimensions ];
-        return true;
-    }
-
-                                                            // INDEXING //
-    Dollar!i opDollar(size_t i)() const pure
+    Dollar!i opDollar(size_t i)() const pure @property
     if (i < rk)
     {
-        return Dollar!i(rk[i]);
+        return Dollar!i(dims[i].length);
     }
 
     Slice!i opSlice(size_t i)(size_t l, size_t u) const pure
     if (i < rk)
-    in { assert (l <= u); assert (u <= dim[i]); }
+    in
+    {
+        import std.format : format;
+        assert (l <= u,
+            "Illegal range: at slice no. %d lower bound > upper bound.".format(i));
+        assert (u <= dims[i].length,
+            "Illegal range: Slice no. %d out of range.".format(i));
+    }
     body
     {
         return Slice!i(l, u);
     }
 
 
+    /+
+    dims =
+        [
+            { 3,  9, 11 },
+            { 2,  4,  5 }
+        ]
+    | ------------------------------------ 11 -------------------------------------- |
+                            | ------------------- 6 ---------------- |
+     0       1       2       3       4       5       6       7       8       9      10     ---
+    11      12      13      14      15      16      17      18      19      20      21      |
+    22      23      24      25*     26*     27*     28*     29*     30*     31      32  --  5
+    33      34      35      36*     37*     38*     39*     40*     41*     42      43  --  |
+    44      45      46      47      48      49      50      51      52      53      54     ---
+    +/
+
+    /// Returns the element at the given position.
     ref inout(T) opIndex(Dims indices) inout pure
+    in
     {
-        return data[gindex(indices)];
+        import std.format : format;
+        foreach (i, index; indices)
+            assert (index < dims[i].length,
+                "Index no. %d.".format(i));
+    }
+    body
+    {
+        size_t k = 0;
+        foreach (i, index; indices)
+            k = k * dims[i].d + (index + dims[i].l);
+        return data[k];
+    }
+    
+    ref inout(T) opIndex(MultiIndex!rk i) inout pure
+    {
+        return opIndex(i.expand);
     }
 
     /// Effectively calls this[$, $, ..., $];
-    auto opIndex() inout pure
+    ref auto opIndex() inout pure
     {
         import std.format : format;
         import std.algorithm.iteration : map;
-        import std.array : iota, join;
-        enum dollars = rk.iota.map!(i => q{ Slice! %d (0, dims[ %d ] ) }.format(i, i)).join(',');
-        mixin(`return this[` ~ dollars ~ `];`);
+        import std.array : join;
+        import std.range : iota;
+
+        enum dollars = rk.iota.map!(i => q{ Slice! %d (0, dims[ %d ].d ) }.format(i, i)).join(',');
+        return mixin(`this[` ~ dollars ~ `]`);
     }
 
-    /// Replaces $ by Slice(0, $) and width-one slices by the value.
-    auto ref auto opIndex(Ts...)(Ts args) pure
+    /// Return Slice of the array. This is not a copy!
+    auto ref opIndex(Args...)(Args args) inout pure
     {
-        foreach (i, T; Ts)
+        import bolpat.implicit : implicit;
+        return implicit!index(args);
+    }
+    
+    private auto ref index(Slices!rk ss)
+    {
+        // Range of slices is enforced by opSlice's contracts
+        Dim[rk] dims = this.dims; // copy as this.dims is inout.
+        foreach (i, s; ss)
+            dims[i].u = (dims[i].l  +=  s.l) + s.length;
+        return inout Array(data, dims);
+    }
+    
+    // auto a = array!int(2, 3, 4);
+    int opApply(scope int delegate(                       ref T) dg) { return opApply((size_t n, MultiIndex!rk i, ref T t) => dg(             t)); } // foreach (            ref x; a)
+    int opApply(scope int delegate(        Dims,          ref T) dg) { return opApply((size_t n, MultiIndex!rk i, ref T t) => dg(   i.expand, t)); } // foreach (   i, j, k, ref x; a)
+    int opApply(scope int delegate(        MultiIndex!rk, ref T) dg) { return opApply((size_t n, MultiIndex!rk i, ref T t) => dg(   i,        t)); } // foreach (     ijk,   ref x; a)
+    int opApply(scope int delegate(size_t, Dims,          ref T) dg) { return opApply((size_t n, MultiIndex!rk i, ref T t) => dg(n, i.expand, t)); } // foreach (n, i, j, k, ref x; a)
+    int opApply(scope int delegate(size_t, MultiIndex!rk, ref T) dg)                                                                                 // foreach (n,   ijk,   ref x; a)
+    {
+        import bolpat.staticarray : staticmap;
+        
+        auto i = multiIndex(dims.staticmap!(d => d.length));
+        size_t k = 0;
+        do
+            if (auto result = dg(k++, i, this[i])) return result;
+        while (++i);
+        return 0;
+    }
+    
+    auto toNestedArray() pure @property
+    {
+        import bolpat.meta : Iterate, Replicate;
+        
+        enum r = rk - 1;
+        
+        Replicate!(r, size_t) bounds;
+        foreach (i, ref bound; bounds)
+            bound = dims[i].length;
+
+        alias Ar(T) = T[];
+        auto result = new Iterate!(Ar, rk, T)( bounds );
+        
+        size_t offset = 0;
+        size_t diff = data.length / dims[r].d; assert (data.length % dims[r].d == 0);
+        foreach (ref xs; result.flatten!r)
         {
-            static if (is (T == Dollr!i))
-                return this[args[0 .. i], args[i].toSlice, args[i+1 .. $]];
-            else static if (is (T == Slice!i))
-            {
-                if (args[i].length == 1)
-                    return this[args[0 .. i], args[i].l, args[i+1 .. $]];
-            }
-            else
-                static assert (is (T == size_t));
+            xs = data[offset + dims[r].l .. offset + dims[r].u];
+            offset += diff;
         }
-        return this[][args];
+        return result;
     }
-
-    @property auto toNestedArray() const pure
+    /+
+    auto toNestedArrayDup() inout pure @property
     {
-        return this[].toNestedArray;
+        import std.range  : iota;
+        import std.format : format;
+        
+        import bolpat.staticarray : staticslice, staticmap;
+        import bolpat.meta : Iterate, Replicate;
+        
+        alias Ar(T) = T[];
+        alias Result = Iterate!(Ar, rk, T);
+        
+        Replicate!(rk, size_t) bounds;
+        foreach (i, ref bound; bounds)
+            bound = dims[i].length;
+        
+        auto result = new Result( bounds );
+        foreach (i, ref x; result.flatten!rk)
+            x = data[i];
+        return result;
     }
+    +/
+/+
+    auto toNestedArray() const pure @property
+    {
+        import std.range                : iota;
+        import std.format               : format;
+        import std.algorithm.iteration  : map;
+        import std.array                : join;
+
+        /// DimArr!(i, T) is T[][]...[] with i copies of [].
+        template DimArr(T, size_t i)
+        {
+            static if (i == 0)  alias DimArr = T;
+            else                alias DimArr = DimArr!(T, i - 1)[];
+        }
+        enum newNestedArray =
+            q{ new DimArr!(T, rk) ( %( dims[ %d ].length %| , %) ) }.format(Dims.length.iota);
+
+        auto result = mixin (newNestedArray);
+
+        alias r0 = result;
+
+        enum foreachs = rk.iota.map!(i => q{ foreach (ref r%d; r%d) }.format(i + 1, i)).join;
+
+        // returns value of k and sets it to the next position.
+        size_t fwd(ref size_t k)
+        {
+            size_t j = k;
+
+            return j;
+        }
+
+        size_t k = 0;
+        mixin (foreachs ~ q{
+        {
+            mixin ( q{ r%d = data[k.fwd]; }.format(rk) );
+        } });
+
+        // return result;
+        assert (0, "TODO: Comply with Slice");
+        return result;
+    }
++/
 }
 
-@property auto dup(T, size_t tk)(in Array!(T, rk) ar) pure
+/+
+/// Creates a copy of the Array.
+auto dup(T, size_t rk)(in Array!(T, rk) ar) pure @property
 {
-    return Array!(T, rk)(ar);
+    assert (0, "TODO");
 }
 
+/// Returns a jagged array with slices of the internal data at lowest level.
+auto nestedArray(T, size_t rk)(in Array!(T, rk) ar) pure @property
+{
+    assert (0, "TODO");
+}
 
+/// Returns a jagged array with copys of the internal data at lowest level.
+auto nestedArrayDup(T, size_t rk)(in Array!(T, rk) ar) pure @property
+{
+    assert (0, "TODO");
+}
++/
 
-struct SubArray(T, Ts...)
+/+
+
+struct SubArray(T, )
 {
 private:
     enum rk = Ts.length;
@@ -373,7 +423,7 @@ private:
     if (Ts.length == rk)
     {
         import std.typecons : Tuple;
-        
+
         size_t[rk]  dims;
         Tuple!Ts tpl;
         alias tpl this;
@@ -390,19 +440,19 @@ private:
     T[]         data;
     size_t[rk]  dims;
     Sector!Ts   sector;
-    
+
     pure this(Array!(T, rk) a)
     {
         this.data = a.data;
         this.dims = a.dims;
-        this.sector.tpl = 
+        this.sector.tpl =
     }
 
     pure this(Array!(T, rk) a, Sector!Ts s)
     {
         this.data = a.data; // no-dup!
         this.dims = a.dims;
-        
+
         this.sector = s;
         size_t[rk]  sectorDims; // necessary since cannot write this.sectorDims more than once.
         foreach (i, T; Ts)
@@ -420,7 +470,8 @@ private:
 pure nothrow @nogc
 {
     /// For a pack of indices calculate the offset in the data.
-    size_t gindex(Dims indices) const                       // INDEXING TOOLS //
+    // INDEXING TOOLS //
+    size_t gindex(Dims indices) const
     {
         size_t result = 0;
         foreach (i, index; indices)
@@ -440,11 +491,11 @@ pure nothrow @nogc
     ref inout(SubArray) opIndex(T...)(T args) inout pure
         if (T.length == rk)
     {
-        
+
     }
-    
-    
-    
+
+
+
     ref T opIndexAssign(S)(S value, Dims indices) pure { return opIndexOpAssign!``(value, indices); }
 
     ref T opIndexOpAssign(string op, S)(S value, Dims indices) pure
@@ -486,18 +537,8 @@ pure nothrow @nogc
     }
 }
 
-class InvalidatedException : Exception
-{
-    this( string msg,
-          string file    = __FILE__,
-          uint line      = cast(uint)__LINE__,
-          Throwable next = null
-        ) pure nothrow @nogc @safe
-    {
-        super(msg, file, line, next);
-    }
-}
-
++/
+/+
 auto LeviCivita(T, Dims...)(Dims dimensions)
 {
     assert(0, "TODO: Debugging and unittest");
@@ -526,11 +567,12 @@ auto LeviCivita(T, Dims...)(Dims dimensions)
         }
         return result;
     }
-    
+
     return Array!(Dims.length)(dims, &eps);
 }
-
-void main()
++/
+/+
+unittest
 {
     import std.stdio;
     import std.range : iota;
@@ -541,17 +583,44 @@ void main()
     foreach (j; 0 .. 3)
     foreach (k; 0 .. 4)
     {
-        a[i, j, k] = 4*3*i + 4*j + k;
+        //a[i, j, k] = 4*3*i + 4*j + k;
     }
 
-    // foreach (i, j, k, element; a)
+    /+ foreach (i, j, k, element; a)
     {
 
     }
-
+    +/
     writeln(a.data);
     auto b = a.toNestedArray;
     writefln("%s %s", b, a.dims);
     writefln("%s %s %s", b.length, b[0].length, b[0][0].length);
 
+}
++/
+
+unittest
+{
+    import std.stdio;
+    
+    auto a = array!int(2, 3, 4);
+    auto b = a[$, 1 .. $, 2];
+    //auto b = a.opIndex(a.opDollar!0, a.opSlice!1(1, a.opDollar!1), 2);
+    int n = 0;
+    foreach (i; 0 .. 2)
+    foreach (j; 0 .. 3)
+    foreach (k; 0 .. 4)
+    {
+        a[i, j, k] = 4*3*i + 4*j + k;
+    }
+    
+    foreach (n, i,j,k, x; b)
+    {
+        writefln("%d: b[%d, %d, %d] = %s", n, i, j, k, x);
+    }
+    foreach (x; b) writef("%s ", x);
+    writeln;
+    
+    writeln(a.data);
+    writeln(b.toNestedArrayDup);
 }
